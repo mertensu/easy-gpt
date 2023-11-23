@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     if wanna_use_wandb:
         wandb_logger = WandbLogger(
-            name="medium_256_d_model", project="easy-gpt", log_model="all"
+            name="small", project="easy-gpt", log_model="all"
         )
     trainer = Trainer(
         max_steps=max_steps,
