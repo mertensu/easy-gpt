@@ -3,8 +3,8 @@ import os
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
-
-from data_module import TxtDataModule, CharTokenizer
+import glob
+from data_module import TxtDataModule, CharTokenizer, BytePairTokenizer
 from lightning_module import LanguageModule
 import json
 
@@ -12,8 +12,14 @@ if __name__ == "__main__":
     # LOGGING
     wanna_use_wandb = False  # future feature
 
+    txt_file_name = "harry2.txt"
+
+    # TOKENIZER
+    # use byte-pair encoding, else character tokenization
+    use_bpe = True
+
     # MODEL
-    context_len = 256
+    context_len = 64
     batch_size = 32
     attn_dropout = 0.1
     mlp_dropout = 0.1
@@ -30,11 +36,10 @@ if __name__ == "__main__":
     limit_val_batches = 100
 
     # TRAINER
-    max_steps = 2_000
-    check_val_every_k_steps = 500
+    max_steps = 500
+    check_val_every_k_steps = 200
 
     dm = TxtDataModule(
-        txt_file_name="harry2.txt",
         data_dir="data",
         batch_size=batch_size,
         context_len=context_len,
@@ -42,19 +47,37 @@ if __name__ == "__main__":
         special_start_tokens=special_tokens,
     )
 
-    # if tokenizer not available, train it
-    if not os.path.exists("tokenizer/char_tokenizer.json"):
-        dm.prepare_data()
+    if use_bpe:
+        # if tokenizer not available, train it on your own data
+        tokenizer = BytePairTokenizer(
+            name="bpeTokenizer",
+            file_path=f"data/{txt_file_name}",
+            num_merges=500,
+            special_tokens=special_tokens,
+        )
+    else:
+        tokenizer = CharTokenizer(name="charTokenizer", special_tokens=special_tokens)
 
-    # Load pretrained tokenizer
-    # to access vocab size
-    with open("tokenizer/char_tokenizer.json", "r") as json_file:
+    if not glob.glob(f"tokenizer/{tokenizer.name}.json"):
+        if txt_file_name is None:
+            raise ValueError(
+                "You want to train on your own txt file but no name is provided"
+            )
+        dm.tokenize_and_store(tokenizer=tokenizer, txt_file_name=txt_file_name)
+
+    # Load pretrained tokenizer to access vocab size
+    with open(f"tokenizer/{tokenizer.name}.json", "r") as json_file:
         loaded_data = json.load(json_file)
-    tkzr = CharTokenizer.from_dict(loaded_data)
+    if use_bpe:
+        tokenizer = BytePairTokenizer.from_dict(loaded_data)
+    else:
+        tokenizer = CharTokenizer.from_dict(loaded_data)
+
+    dm.build_datasets(tokenizer)
 
     lang_model = LanguageModule(
         d_model=d_model,
-        vocab_size=tkzr.vocab_size,
+        vocab_size=tokenizer.vocab_size,
         context_len=dm.context_len,
         n_layers=n_layers,
         n_heads=n_heads,
@@ -67,9 +90,7 @@ if __name__ == "__main__":
     lr_monitor = LearningRateMonitor(logging_interval="step")
 
     if wanna_use_wandb:
-        wandb_logger = WandbLogger(
-            name="small", project="easy-gpt", log_model="all"
-        )
+        wandb_logger = WandbLogger(name="small", project="easy-gpt", log_model="all")
     trainer = Trainer(
         max_steps=max_steps,
         val_check_interval=check_val_every_k_steps,

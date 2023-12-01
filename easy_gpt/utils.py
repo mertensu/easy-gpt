@@ -3,7 +3,7 @@ import os
 
 def load_latest_checkpoint(logs_folder, version=None):
     if version is None:
-        version_directories = [d for d in os.listdir(logs_folder)]
+        version_directories = [d for d in os.listdir(logs_folder) if 'version' in d]
         latest_version = max(version_directories, key=lambda x: int(x.split("_")[1]))
     else:
         latest_version = version
