@@ -647,7 +647,7 @@ class TxtDataModule(pl.LightningDataModule):
         Returns:
             None
         """
-        if not glob.glob("tokenizer/*.json"):
+        if not glob.glob(f"tokenizer/{tokenizer.name}.json"):
             # open txt file on which you would like to train the model
             with open(
                 f"{self.data_dir}/{txt_file_name}", "r", encoding="ISO-8859-1"
