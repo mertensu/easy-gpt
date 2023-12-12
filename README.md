@@ -23,6 +23,7 @@ using Pytorch-Lightning (https://lightning.ai/).
 - `kv_cache.py`: kv-cache handling using attention sinks
 - `run.py`: script to train the model
 - `generate.py`: script to generate text
+- `finetune.py`: script to finetune a model
 
 ## How to use
 
@@ -68,10 +69,16 @@ python generate.py
 to generate new tokens based on the most recent run and some starting prompt. Feel free to adjust `generate.py` to
 your needs. 
 
+### FINETUNING
+
+You can also finetune a pretrained model using the `finetune.py` script. By default,
+a pretrained model is finetuned on a small Q&A dataset (see data/harry_finetuning.json)
+about Harry Potter. As always, feel free to adjust the code and use an instruction dataset of your choice.
+
+
 ## Future ideas:
 
-- finetuning with LoRA (there is already a `CustomLinearLayer`) 
-- other tokenizers (such as BPE)
+- Retrieval augmented generation (RAG)
 - more advanced sampling techniques
 - ...
 

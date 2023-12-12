@@ -404,7 +404,7 @@ class Transformer(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.n_layers = n_layers
         # construct single decoder layer
-        self.decoder = TransformerDecoderLayer(
+        decoder = TransformerDecoderLayer(
             d_model,
             n_heads,
             mlp_mult_factor,
@@ -413,7 +413,7 @@ class Transformer(nn.Module):
             lora_config=lora_config,
         )
         # construct list of decoder layers
-        self.layers = _get_clones(self.decoder, self.n_layers)
+        self.layers = _get_clones(decoder, self.n_layers)
         # projection layer from d_model to vocab_size
         self.to_logits = nn.Linear(d_model, vocab_size)
 
@@ -423,7 +423,7 @@ class Transformer(nn.Module):
         attn_mask: torch.Tensor = None,
         pad_mask: torch.Tensor = None,
         past_key_values: Tuple[Tuple[torch.Tensor, ...], ...] = None,
-    ) -> Tuple[torch.Tensor, ..., Tuple[Tuple[torch.Tensor, ...], ...]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Tuple, Tuple]:
         """
         Forward pass through Transformer
 
@@ -434,7 +434,7 @@ class Transformer(nn.Module):
             past_key_values (Tuple[Tuple[torch.Tensor,...],...]): tuple containing as many kv tuples as there are layers
 
         Returns:
-            prediction tensor of shape (B, S, vocab_size), attention weight tuple, kv-cache tuple
+            prediction tensor of shape (B, S, vocab_size), final hidden states, attention weight tuple, kv-cache tuple
         """
         # for the first run, there are no past_key_values, so create an empty tuple
         if past_key_values is None:
@@ -443,7 +443,7 @@ class Transformer(nn.Module):
         # for each token, lookup its embedding, result is tensor of shape (B, S, d_model)
         word_embedding_tensor = self.embedding(inp_seq)
 
-        out = word_embedding_tensor
+        out: torch.Tensor = word_embedding_tensor
         attn_weights: Tuple = ()
         presents: Tuple = ()
         # iterate over every decoder layer block and pass output as new input
@@ -453,4 +453,4 @@ class Transformer(nn.Module):
             attn_weights = attn_weights + (attn_weight,)
             presents = presents + (present,)
 
-        return self.to_logits(out), attn_weights, presents
+        return self.to_logits(out), out, attn_weights, presents

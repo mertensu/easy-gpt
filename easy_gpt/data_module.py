@@ -5,14 +5,14 @@ import logging
 
 import lightning.pytorch as pl
 import torch
-from utils import remove_unicode_chars
+from utils import clean
 import numpy as np
 import os
 import json
 import re
 import collections
-from typing import List, Tuple, Dict
-from torch.utils.data import DataLoader, IterableDataset
+from typing import List, Dict
+from torch.utils.data import DataLoader, IterableDataset, Dataset
 import glob
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class BytePairTokenizer:
         Returns:
             None
         """
-        # consturct dictionary holding words split by character/token
+        # construct dictionary holding words split by character/token
         word_dict = self.word2freq()
         for i in range(self.num_merges):
             # compute dictionary of pairs
@@ -89,9 +89,15 @@ class BytePairTokenizer:
             token_dict = self.token2freq(word_dict)
 
         # construct mapping from token to index
-        self.token2index = {token: i for i, token in enumerate(token_dict.keys())}
+        self.token2index = {"</pad>": 0}
+        self.token2index.update(
+            {token: i for i, token in enumerate(token_dict.keys(), 1)}
+        )
         # reverse
-        self.index2token = {i: token for i, token in enumerate(token_dict.keys())}
+        self.index2token = {0: "</pad>"}
+        self.index2token.update(
+            {i: token for i, token in enumerate(token_dict.keys(), 1)}
+        )
         # number of tokens is vocab size
         self.vocab_size = len(self.token2index)
         # set to trained
@@ -114,10 +120,10 @@ class BytePairTokenizer:
         start_idx = len(self.token2index)
         # loop over special tokens and append to encoding/decoding dicts
         for i, special_token in enumerate(self.special_tokens):
-            self.token2index[special_token + '</w>'] = start_idx + i
-            self.index2token[start_idx + i] = special_token + '</w>'
+            self.token2index[special_token + "</w>"] = start_idx + i
+            self.index2token[start_idx + i] = special_token + "</w>"
             self.special_token_idx.append(start_idx + i)
-            self.word2subwords[special_token] = [special_token + '</w>']
+            self.word2subwords[special_token] = [special_token + "</w>"]
 
     def prepare_for_encoding(self, word: str) -> str:
         """
@@ -325,7 +331,7 @@ class BytePairTokenizer:
             original_word = word.replace(" ", "")
             original_word = original_word.replace("</w>", "")
             # if word not already exists
-            if not original_word in subword_dict:
+            if original_word not in subword_dict:
                 for token in word_tokens:
                     subword_dict[original_word].append(token)
         return subword_dict
@@ -612,6 +618,124 @@ class TxtDataset(IterableDataset):
             yield x, y
 
 
+class FinetuningDataset(Dataset):
+    """
+    Pytorch dataset used for finetuning (supervised learning)
+
+    Args:
+        data (Dict): dict holding prompt and response columns
+        prompt_col_name (str): the column name storing the prompts
+        response_col_name (str): the column name storing the response
+        tokenizer: the pretrained tokenizer
+        context_len (int): the context length for finetuning (usually the same as during pretraining)
+        max_prompt_len_prop (float): how much of the context_len can maximally be used for the prompt (default: 0.5)
+    """
+
+    def __init__(
+        self,
+        data,
+        prompt_col_name,
+        response_col_name,
+        tokenizer,
+        context_len,
+        max_prompt_len_prop=0.5,
+    ):
+        self.data = data
+        self.prompt_col_name = prompt_col_name
+        self.response_col_name = response_col_name
+        self.tokenizer = tokenizer
+        self.n_special_tokens = len(self.tokenizer.special_token_idx)
+        self.special_token_tensor = torch.tensor(self.tokenizer.special_token_idx)
+        self.max_prompt_len_prop = max_prompt_len_prop
+        # note that we add special tokens, so have to account for those
+        self.context_len = context_len - self.n_special_tokens
+        self.max_prompt_len = int(self.max_prompt_len_prop * self.context_len)
+
+    def __len__(self):
+        return len(self.data[self.prompt_col_name])
+
+    def pad_right(self, x: torch.Tensor, pad_value: int) -> torch.Tensor:
+        """
+        Add padding_values to the right of a tensor such that its length is self.context_len
+
+        Args:
+            x (torch.Tensor): tensor containing prompt and response
+            pad_value: the value the tensor will be appended with
+
+        Returns:
+            torch.Tensor: tensor of length context len
+        """
+        n_pads = self.context_len - len(x)
+        return torch.cat((x, torch.full((n_pads,), pad_value, dtype=x.dtype)))
+
+    def __getitem__(self, idx):
+        """
+        Logic here is the following. An example with context_len=10
+
+        Prompt: 'How are you?', Response: 'I am fine'
+        Encoded_prompt: [0,1,2], Encoded response: [3,4,5]
+        prompt_response [0,1,2,3,4,5]
+        -> add special token:
+        prompt = [600,0,1,2]
+        prompt_response = [600,0,1,2,3,4,5]
+        -> pad_right (since its shorted than context_len tokens):
+        prompt_response = [600,0,1,2,3,4,5,0,0,0]
+        -> construct target:
+        target = [600,0,1,2,4,5]
+        -> mask prompt part:
+        target = [-100,-100,-100,-100,4,5]
+        -> pad_right:
+        target = [-100,-100,-100,-100,4,5,0,0,0,0]
+
+        --> return
+        prompt_response = [600,   0,  1,     2, *3,4,5,*  0,0,0]
+        target          = [-100,-100,-100,-100, *4,5,0,*  0,0,0]
+
+        Args:
+            idx:
+
+        Returns:
+
+        """
+        # extract row
+        prompt_text = f"Prompt: {self.data[self.prompt_col_name][idx]};Response: "
+        response_text = self.data[self.response_col_name][idx]
+        # encode prompt only up until max_prompt_len tokens
+        prompt = torch.tensor(
+            self.tokenizer.encode(prompt_text)[: self.max_prompt_len], dtype=torch.int64
+        )
+        # encode response
+        response = torch.tensor(self.tokenizer.encode(response_text), dtype=torch.int64)
+        # construct prompt + response tensor
+        prompt_response = torch.cat((prompt, response))
+
+        # prefix special token(s)
+        if self.n_special_tokens > 0:
+            # iterate over list of special tokens in reverse order
+            for i in reversed(range(self.n_special_tokens)):
+                prompt_response = torch.cat(
+                    (self.special_token_tensor[[i]], prompt_response)
+                )
+                prompt = torch.cat((self.special_token_tensor[[i]], prompt))
+
+        # potentially cut the prompt_response to context_len
+        prompt_response = prompt_response[: self.context_len]
+        # if less than context_len, make input of length context_len by filling up with pad tokens
+        if len(prompt_response[:-1]) < self.context_len:
+            prompt_response = self.pad_right(prompt_response[:-1], pad_value=0)
+
+        # construct target by shifting the response by 1 token
+        target = torch.cat((prompt, response[1:]))[: self.context_len]
+        # mask output for prompt for cross-entropy loss (-100) will be ignored by default
+        target[: len(prompt)] = -100
+        # make target of length context_len by filling up with ignore_index (-100)
+        if len(target) < self.context_len:
+            target = self.pad_right(target, pad_value=-100)
+
+        # return prompt_response only up until the second last token, and target
+        return prompt_response, target
+
+
 class TxtDataModule(pl.LightningDataModule):
     """
     A lightning data module for preparing text data for autoregressive language modeling
@@ -654,10 +778,7 @@ class TxtDataModule(pl.LightningDataModule):
             ) as f:
                 text = f.read()
                 # replace newline character with white space
-                text = text.replace("\n", " ")
-                # only needed to remove some unicode chars such that the vocab looks nicer
-                # ,i.e. contains only regular characters
-                text = remove_unicode_chars(text)
+                text = clean(text)
             # construct vocabulary and dict mappings
             tokenizer.train(text)
             logger.info("Tokenizer trained")
@@ -677,7 +798,9 @@ class TxtDataModule(pl.LightningDataModule):
             logger.info("Data preparation already done, skipping...")
             pass
 
-    def _store_in_memmap(self, tokenizer_name, tokenized_text: np.ndarray, stage: str) -> None:
+    def _store_in_memmap(
+        self, tokenizer_name, tokenized_text: np.ndarray, stage: str
+    ) -> None:
         """
         Stores tokenized text in binary format for later use
 

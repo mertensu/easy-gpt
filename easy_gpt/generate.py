@@ -13,11 +13,11 @@ if __name__ == "__main__":
 
     if use_bpe:
         # Load pretrained tokenizer to access vocab size
-        with open(f"tokenizer/bpeTokenizer.json", "r") as json_file:
+        with open("tokenizer/bpeTokenizer.json", "r") as json_file:
             loaded_data = json.load(json_file)
             tokenizer = BytePairTokenizer.from_dict(loaded_data)
     else:
-        with open(f"tokenizer/charTokenizer.json", "r") as json_file:
+        with open("tokenizer/charTokenizer.json", "r") as json_file:
             loaded_data = json.load(json_file)
             tokenizer = CharTokenizer.from_dict(loaded_data)
     # GENERATE PATH

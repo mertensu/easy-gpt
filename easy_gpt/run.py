@@ -1,4 +1,3 @@
-import os
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import LearningRateMonitor

@@ -79,7 +79,7 @@ class LanguageModule(pl.LightningModule):
         self,
         inp_seq: torch.Tensor,
         past_key_values: Tuple[Tuple[torch.Tensor, ...], ...] = None,
-    ) -> Tuple[torch.Tensor, ..., Tuple[Tuple[torch.Tensor, ...], ...]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Tuple, Tuple]:
         """
         Forward pass through Transformer model
 
@@ -88,7 +88,7 @@ class LanguageModule(pl.LightningModule):
             past_key_values: Tuple holding the k,v caches of each decoder layer
 
         Returns:
-            logits, attention weights, past_key_values
+            logits, hidden_states, attention weights, past_key_values
         """
         return self.transformer(
             inp_seq=inp_seq,
@@ -116,7 +116,7 @@ class LanguageModule(pl.LightningModule):
         """
         inp_seq, target_seq = batch
         # we are only interested in the logits
-        logits, _, _ = self.transformer(
+        logits, _, _, _ = self.transformer(
             inp_seq=inp_seq,
             attn_mask=self.causal_attn_mask,
             pad_mask=self.special_token_mask,
@@ -146,7 +146,7 @@ class LanguageModule(pl.LightningModule):
             torch.Tensor: the val loss for that batch
         """
         inp_seq, target_seq = batch
-        logits, _, _ = self.transformer(
+        logits, _, _, _ = self.transformer(
             inp_seq=inp_seq,
             attn_mask=self.causal_attn_mask,
             pad_mask=self.special_token_mask,
@@ -206,7 +206,7 @@ class LanguageModule(pl.LightningModule):
         # from outside the model and lies on cpu.
         token_idx = torch.tensor(inp_seq, dtype=torch.long)[None, ...].to(self.device)
         # pass through model and get next token prediction plus past_key_values
-        logits, _, past_key_values = self.transformer(
+        logits, _, _, past_key_values = self.transformer(
             inp_seq=token_idx,
             attn_mask=self.causal_attn_mask,
             pad_mask=self.special_token_mask,
@@ -267,7 +267,7 @@ class LanguageModule(pl.LightningModule):
         Returns:
             the logits of each token being the next one, update kv-cache
         """
-        logits, _, pkv = self.transformer(
+        logits, _, _, pkv = self.transformer(
             inp_seq=token_idx_next,
             attn_mask=self.causal_attn_mask,
             pad_mask=self.special_token_mask,
@@ -282,7 +282,7 @@ class LanguageModule(pl.LightningModule):
         inp_seq = tokenizer.encode(text)
         # we get a list of tokens and convert to tensor with batch dim
         token_idx = torch.tensor(inp_seq, dtype=torch.long)[None, ...]
-        logits, _, past_key_values = self.transformer(
+        logits, _, _, past_key_values = self.transformer(
             inp_seq=token_idx,
             attn_mask=self.causal_attn_mask,
             pad_mask=self.special_token_mask,
@@ -302,7 +302,7 @@ class LanguageModule(pl.LightningModule):
                 past_key_values=past_key_values if use_past else None,
             )
             logits = out[0]
-            past_key_values = out[2]
+            past_key_values = out[3]
             logits = logits[:, -1, :]
             probs = F.softmax(logits, dim=-1)
             token_idx_next = torch.multinomial(probs, num_samples=1)

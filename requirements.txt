@@ -95,6 +95,7 @@ sympy==1.12
 tensorboardX==2.6.2.2
 tokenizers==0.14.0
 torch==2.1.0
+torchinfo==1.8.0
 torchmetrics==1.2.0
 tqdm==4.66.1
 traitlets==5.11.2
